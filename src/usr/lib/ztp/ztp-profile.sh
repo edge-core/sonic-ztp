@@ -290,6 +290,37 @@ if [ "$CMD" = "remove" ] ; then
         updateActivity "Restarting network configuration"
         # Restart interface configuration to stop DHCP
         systemctl restart interfaces-config
+
+        # Re-assert front panel port configuration.
+        #
+        # interfaces-config regenerates /etc/network/interfaces from interfaces.j2.
+        # Now that ZTP|mode has been removed above, the ZTP in-band block of that
+        # template is no longer rendered, so the regenerated file contains no Ethernet
+        # stanza at all. The "systemctl restart networking" performed by
+        # interfaces-config.sh then runs "ifdown -a" followed by "ifup -a": ifupdown2
+        # tears down every front panel port it had adopted for ZTP in-band DHCP, and
+        # "ifup -a" does not bring them back because they are no longer listed. The
+        # netdev is left administratively down with its MTU reset to the kernel default,
+        # while CONFIG_DB, APPL_DB and the ASIC all still report the port as up.
+        #
+        # portmgrd only acts on CONFIG_DB events and keeps no desired state, so it
+        # never notices nor corrects this drift. Writing any field of
+        # CONFIG_DB PORT|<port> back with its current value produces a keyspace event,
+        # and SubscriberStateTable delivers the entire hash, so portmgrd re-applies both
+        # mtu and admin_status. This is idempotent: a port that is already up is not
+        # flapped.
+        #
+        # interfaces-config.service and networking.service are both Type=oneshot, and
+        # neither restart above uses --no-block, so ifdown/ifup have completed by the
+        # time this loop runs.
+        updateActivity "Re-asserting front panel port configuration"
+        for port_key in $(sonic-db-cli CONFIG_DB KEYS 'PORT|Ethernet*'); do
+            port_admin_status="$(sonic-db-cli CONFIG_DB HGET "${port_key}" admin_status)"
+            if [ -n "${port_admin_status}" ]; then
+                sonic-db-cli CONFIG_DB HSET "${port_key}" admin_status \
+                    "${port_admin_status}" > /dev/null
+            fi
+        done
     fi
 
     # Remove ZTP DHCP policy
