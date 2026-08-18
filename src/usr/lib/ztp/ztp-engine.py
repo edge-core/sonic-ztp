@@ -306,13 +306,29 @@ class ZTPEngine():
         return False
 
     def __discoverOnly(self):
+        '''!
+         Prepare the system for ZTP discovery when a saved configuration is being
+         used (use_config_db). This is a one time setup, mirroring the behavior of
+         __loadZTPProfile().
+
+         ztp-profile.sh discoverOnly restarts rsyslog and interfaces-config. Without
+         the __ztp_profile_loaded guard it is re-executed on every iteration of the
+         discovery loop (discovery-interval, 10s by default), which repeatedly tears
+         down in-band interfaces and their DHCP clients.
+
+           @return  False - If discovery setup was already performed
+                    True  - If discovery setup was performed
+        '''
         # Do not attempt to install ZTP configuration if working in unit test mode
         if self.test_mode:
             return False
 
-        cmd = getCfg('ztp-lib-dir')+'/ztp-profile.sh discoverOnly'
-        rc = runCommand(cmd, capture_stdout=False)
-        return True
+        if self.__ztp_profile_loaded is False:
+            cmd = getCfg('ztp-lib-dir')+'/ztp-profile.sh discoverOnly'
+            rc = runCommand(cmd, capture_stdout=False)
+            self.__ztp_profile_loaded = True
+            return True
+        return False
 
     def __createProvScriptJson(self):
         '''!
